@@ -1,0 +1,38 @@
+# 基于 Ubuntu 18.04 镜像
+FROM supermicro.gpus.tecrun.com:5000/tecrun/ubuntu18.04:cuda11.2-cudnn8.1-dev1.0
+
+# 安装必要的依赖项
+RUN apt-get update && apt-get install -y \
+    wget \
+    curl \
+    ca-certificates \
+    vim \
+    && rm -rf /var/lib/apt/lists/*
+
+# 下载并安装 Anaconda
+RUN wget https://repo.anaconda.com/archive/Anaconda3-2024.02-1-Linux-x86_64.sh && \
+    bash Anaconda3-2024.02-1-Linux-x86_64.sh -b -p /opt/anaconda3 && \
+    rm Anaconda3-2024.02-1-Linux-x86_64.sh
+
+# 设置环境变量
+ENV PATH="/opt/anaconda3/bin:${PATH}"
+
+# 在.bashrc中添加source /opt/anaconda3/etc/profile.d/conda.sh
+RUN echo "source /opt/anaconda3/etc/profile.d/conda.sh" >> /root/.bashrc && \
+    echo "conda activate llm" >> /root/.bashrc
+
+# 创建虚拟环境
+RUN conda create -n llm python=3.10
+
+# 激活虚拟环境
+SHELL ["conda", "run", "-n", "llm", "/bin/bash", "-c"]
+
+# 在虚拟环境中安装 PyTorch
+RUN conda install -y pytorch torchvision torchaudio pytorch-cuda=11.8 -c pytorch -c nvidia
+
+# 在虚拟环境中安装 python包
+RUN pip install pydantic==2.7.0 datasets==2.19.0 transformers==4.40.0 peft==0.10.0 trl==0.8.5 gradio==4.27.0
+
+
+# 启动时运行 Bash shell
+CMD ["/bin/bash"]
