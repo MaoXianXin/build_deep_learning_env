@@ -38,7 +38,7 @@ SHELL ["/home/appuser/anaconda3/bin/conda", "run", "-n", "llm", "/bin/bash", "-c
 RUN conda install -y pytorch==2.2.1 torchvision==0.17.1 torchaudio==2.2.1 pytorch-cuda=12.1 -c pytorch -c nvidia
 
 # 在虚拟环境中安装 python包
-RUN pip install pydantic==2.7.0 datasets==2.19.0 transformers==4.40.0 peft==0.10.0 trl==0.8.5 gradio==4.27.0 vllm==0.4.1
+RUN pip install pydantic==2.7.0 datasets==2.19.0 transformers==4.40.0 peft==0.10.0 trl==0.8.5 gradio==4.27.0 vllm==0.4.1 jieba==0.42.1 nltk==3.8.1 rouge-chinese==1.0.3
 
 # 复制 install.sh 脚本到容器中
 COPY install.sh /home/appuser/install.sh
