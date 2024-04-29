@@ -35,10 +35,20 @@ RUN /home/appuser/anaconda3/bin/conda create -n llm python=3.10
 SHELL ["/home/appuser/anaconda3/bin/conda", "run", "-n", "llm", "/bin/bash", "-c"]
 
 # 在虚拟环境中安装 PyTorch
-RUN conda install -y pytorch torchvision torchaudio pytorch-cuda=11.8 -c pytorch -c nvidia
+RUN conda install -y pytorch==2.2.1 torchvision==0.17.1 torchaudio==2.2.1 pytorch-cuda=12.1 -c pytorch -c nvidia
 
 # 在虚拟环境中安装 python包
-RUN pip install pydantic==2.7.0 datasets==2.19.0 transformers==4.40.0 peft==0.10.0 trl==0.8.5 gradio==4.27.0
+RUN pip install pydantic==2.7.0 datasets==2.19.0 transformers==4.40.0 peft==0.10.0 trl==0.8.5 gradio==4.27.0 vllm==0.4.1
+
+# 复制 install.sh 脚本到容器中
+COPY install.sh /home/appuser/install.sh
+
+# 切换回 root 用户并执行 install.sh 脚本
+USER root
+RUN bash /home/appuser/install.sh
+
+# 切换回 appuser
+USER appuser
 
 # 启动时运行 Bash shell
 CMD ["/bin/bash"]
