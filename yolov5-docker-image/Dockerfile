@@ -9,10 +9,17 @@ RUN apt-get update && apt-get install -y \
     vim \
     libgl1-mesa-dev \
     libglib2.0-0 \
+    sudo \
     && rm -rf /var/lib/apt/lists/*
 
 # 创建一个非 root 用户
 RUN useradd -m appuser
+
+# 为 appuser 设置密码
+RUN echo 'appuser:123' | chpasswd
+
+# 将 appuser 添加到 sudo 组
+RUN usermod -aG sudo appuser
 
 # 切换到非 root 用户
 USER appuser
