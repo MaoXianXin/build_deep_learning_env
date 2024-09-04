@@ -1,5 +1,5 @@
-# 基于 Ubuntu 18.04 镜像
-FROM supermicro.gpus.tecrun.com:5000/tecrun/ubuntu18.04:cuda11.2-cudnn8.1-dev1.0
+# 基于 nvcr.io/nvidia/pytorch:24.07-py3 镜像
+FROM nvcr.io/nvidia/pytorch:24.07-py3
 
 # 安装必要的依赖项
 RUN apt-get update && apt-get install -y \
