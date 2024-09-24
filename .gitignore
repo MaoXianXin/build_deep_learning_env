@@ -2,3 +2,15 @@
 diffusers-docker-image/diffusers/
 
 .vscode/
+
+hubserving-docker-image/ch_PP-OCRv4_det_server_infer/
+
+hubserving-docker-image/ch_PP-OCRv4_rec_server_infer/
+
+hubserving-docker-image/en_PP-OCRv4_rec_mrz/
+
+hubserving-docker-image/en_PP-OCRv4_rec_vis/
+
+hubserving-docker-image/en_PP-OCRv4_rec_vis_gray/
+
+hubserving-docker-image/PaddleOCR/
