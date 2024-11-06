@@ -1,0 +1,1 @@
+docker build -t paddle:v0.1 .
