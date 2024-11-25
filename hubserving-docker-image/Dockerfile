@@ -27,5 +27,19 @@ COPY en_PP-OCRv4_rec_vis_gray /paddle/PaddleOCR/inference/en_PP-OCRv4_rec_vis_gr
 # 设置工作目录
 WORKDIR /paddle/PaddleOCR
 
-# 运行deploy_hubserving.sh脚本
-CMD ["./deploy_hubserving.sh"]
+# 安装指定的Python包
+RUN pip install torch==1.11.0+cu113 torchvision==0.12.0+cu113 torchaudio==0.11.0 --extra-index-url https://download.pytorch.org/whl/cu113
+RUN pip install pyyaml==6.0 tqdm==4.65.0 opencv-python==4.7.0.72 pandas==2.0.2 matplotlib==3.7.1 seaborn==0.11.2 tensorboard==2.13.0 scipy==1.10.1 pillow==9.5.0 numpy==1.21.4
+
+# 将本地的Arial.ttf复制到容器中的/root/.config/Ultralytics目录
+COPY Arial.ttf /root/.config/Ultralytics/Arial.ttf
+COPY yolov5 /yolov5
+
+# 安装 supervisor
+RUN apt-get update && apt-get install -y supervisor
+
+# 复制 supervisord 配置文件
+COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+
+# 运行deploy_hubserving.sh脚本和Flask服务
+CMD ["/usr/bin/supervisord"]
