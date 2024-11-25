@@ -1,0 +1,1 @@
+docker build -t yolov5-server:v0.1 .

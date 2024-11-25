@@ -14,3 +14,5 @@ hubserving-docker-image/en_PP-OCRv4_rec_vis/
 hubserving-docker-image/en_PP-OCRv4_rec_vis_gray/
 
 hubserving-docker-image/PaddleOCR/
+
+yolov5-server-docker-image/yolov5/
