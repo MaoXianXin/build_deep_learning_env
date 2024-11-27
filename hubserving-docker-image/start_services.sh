@@ -40,19 +40,19 @@ events {
 
 http {
     upstream ocr_system {
-        $(for i in $(seq 0 $(($NUM_GPUS-1))); do echo "        server localhost:$((BASE_PORT_SYSTEM + i * 10));"; done)
+$(for i in $(seq 0 $(($NUM_GPUS-1))); do echo "        server localhost:$((BASE_PORT_SYSTEM + i * 10));"; done)
     }
     
     upstream ocr_rec_vis {
-        $(for i in $(seq 0 $(($NUM_GPUS-1))); do echo "        server localhost:$((BASE_PORT_VIS + i * 10));"; done)
+$(for i in $(seq 0 $(($NUM_GPUS-1))); do echo "        server localhost:$((BASE_PORT_VIS + i * 10));"; done)
     }
     
     upstream ocr_rec_mrz {
-        $(for i in $(seq 0 $(($NUM_GPUS-1))); do echo "        server localhost:$((BASE_PORT_MRZ + i * 10));"; done)
+$(for i in $(seq 0 $(($NUM_GPUS-1))); do echo "        server localhost:$((BASE_PORT_MRZ + i * 10));"; done)
     }
     
     upstream ocr_rec_vis_gray {
-        $(for i in $(seq 0 $(($NUM_GPUS-1))); do echo "        server localhost:$((BASE_PORT_GRAY + i * 10));"; done)
+$(for i in $(seq 0 $(($NUM_GPUS-1))); do echo "        server localhost:$((BASE_PORT_GRAY + i * 10));"; done)
     }
 
     server {
