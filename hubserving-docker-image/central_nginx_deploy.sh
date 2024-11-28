@@ -32,22 +32,25 @@ check_port() {
 # 在主逻辑开始前先执行清理
 cleanup
 
-# 定义所有节点的IP地址和GPU数量
-declare -A NODES
-NODES=(
-    ["192.168.3.23"]=1  # 节点IP和GPU数量
-    ["192.168.1.15"]=1
-)
+# 从.env文件加载环境变量
+if [ -f ".env" ]; then
+    source .env
+else
+    error_exit ".env 文件不存在"
+fi
 
-BASE_PORT_SYSTEM=18842
-BASE_PORT_VIS=18843
-BASE_PORT_MRZ=18844
-BASE_PORT_GRAY=18845
+# 解析NODES字符串为数组
+declare -A NODES
+IFS=',' read -ra NODE_ARRAY <<< "$NODES"
+for node in "${NODE_ARRAY[@]}"; do
+    IFS=':' read -r ip gpu_count <<< "$node"
+    NODES[$ip]=$gpu_count
+done
 
 # 创建Nginx配置
 cat > nginx.conf <<EOF
 events {
-    worker_connections 1024;
+    worker_connections ${NGINX_WORKER_CONNECTIONS};
 }
 
 http {
@@ -55,36 +58,36 @@ http {
     upstream ocr_system {
 $(for ip in "${!NODES[@]}"; do
     for gpu_id in $(seq 0 $((${NODES[$ip]}-1))); do
-        echo "        server $ip:$((BASE_PORT_SYSTEM + gpu_id * 10));"
+        echo "        server $ip:$((BASE_PORT_SYSTEM + gpu_id * PORT_OFFSET_PER_GPU));"
     done
 done)
     }
     upstream ocr_rec_vis {
 $(for ip in "${!NODES[@]}"; do
     for gpu_id in $(seq 0 $((${NODES[$ip]}-1))); do
-        echo "        server $ip:$((BASE_PORT_VIS + gpu_id * 10));"
+        echo "        server $ip:$((BASE_PORT_VIS + gpu_id * PORT_OFFSET_PER_GPU));"
     done
 done)
     }
     upstream ocr_rec_mrz {
 $(for ip in "${!NODES[@]}"; do
     for gpu_id in $(seq 0 $((${NODES[$ip]}-1))); do
-        echo "        server $ip:$((BASE_PORT_MRZ + gpu_id * 10));"
+        echo "        server $ip:$((BASE_PORT_MRZ + gpu_id * PORT_OFFSET_PER_GPU));"
     done
 done)
     }
     upstream ocr_rec_vis_gray {
 $(for ip in "${!NODES[@]}"; do
     for gpu_id in $(seq 0 $((${NODES[$ip]}-1))); do
-        echo "        server $ip:$((BASE_PORT_GRAY + gpu_id * 10));"
+        echo "        server $ip:$((BASE_PORT_GRAY + gpu_id * PORT_OFFSET_PER_GPU));"
     done
 done)
     }
 
     # 定义四个服务的负载均衡规则
     server {
-        listen 12342;
-        location /predict/ocr_system {
+        listen ${CONTAINER_PORT_SYSTEM};
+        location ${API_PATH_SYSTEM} {
             proxy_pass http://ocr_system;
             proxy_set_header Host \$host;
             proxy_set_header X-Real-IP \$remote_addr;
@@ -92,8 +95,8 @@ done)
     }
 
     server {
-        listen 12343;
-        location /predict/ocr_rec_vis {
+        listen ${CONTAINER_PORT_VIS};
+        location ${API_PATH_VIS} {
             proxy_pass http://ocr_rec_vis;
             proxy_set_header Host \$host;
             proxy_set_header X-Real-IP \$remote_addr;
@@ -101,8 +104,8 @@ done)
     }
 
     server {
-        listen 12344;
-        location /predict/ocr_rec_mrz {
+        listen ${CONTAINER_PORT_MRZ};
+        location ${API_PATH_MRZ} {
             proxy_pass http://ocr_rec_mrz;
             proxy_set_header Host \$host;
             proxy_set_header X-Real-IP \$remote_addr;
@@ -110,8 +113,8 @@ done)
     }
 
     server {
-        listen 12345;
-        location /predict/ocr_rec_vis_gray {
+        listen ${CONTAINER_PORT_GRAY};
+        location ${API_PATH_GRAY} {
             proxy_pass http://ocr_rec_vis_gray;
             proxy_set_header Host \$host;
             proxy_set_header X-Real-IP \$remote_addr;
@@ -121,7 +124,7 @@ done)
 EOF
 
 # 检查必要的端口
-PORTS=(12342 12343 12344 12345)
+PORTS=(${CONTAINER_PORT_SYSTEM} ${CONTAINER_PORT_VIS} ${CONTAINER_PORT_MRZ} ${CONTAINER_PORT_GRAY})
 for PORT in "${PORTS[@]}"; do
     if ! check_port $PORT; then
         error_exit "端口 $PORT 已被占用"
@@ -136,14 +139,14 @@ fi
 # 启动Nginx容器
 echo "正在启动 Nginx 容器..."
 CONTAINER_ID=$(docker run -d \
-    --name nginx-ocr \
+    --name ${NGINX_CONTAINER_NAME} \
     --network host \
     -v $(pwd)/nginx.conf:/etc/nginx/nginx.conf:ro \
-    nginx:latest)
+    ${NGINX_IMAGE})
 
 echo "Nginx 容器已启动:"
 echo "容器 ID: ${CONTAINER_ID:0:12}"
-echo "容器名称: nginx-ocr"
+echo "容器名称: ${NGINX_CONTAINER_NAME}"
 echo "使用端口: ${PORTS[*]}"
 echo "配置文件: $(pwd)/nginx.conf"
 

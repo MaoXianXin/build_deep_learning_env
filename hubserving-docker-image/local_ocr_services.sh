@@ -1,6 +1,13 @@
 #!/bin/bash
 set -e  # 脚本遇到错误立即退出
 
+# 从.env文件加载环境变量
+if [ -f ".env" ]; then
+    source .env
+else
+    error_exit ".env 文件不存在"
+fi
+
 # 清理函数
 cleanup() {
     echo "正在清理..."
@@ -43,14 +50,9 @@ if [ $NUM_GPUS -eq 0 ]; then
     exit 1
 fi
 
-BASE_PORT_SYSTEM=18842  # OCR System服务起始端口
-BASE_PORT_VIS=18843      # OCR Rec Vis服务起始端口
-BASE_PORT_MRZ=18844      # OCR Rec MRZ服务起始端口
-BASE_PORT_GRAY=18845     # OCR Rec Vis Gray服务起始端口
-
 # 在启动容器前检查端口
 for gpu_id in $(seq 0 $(($NUM_GPUS-1))); do
-    port_offset=$((gpu_id * 10))
+    port_offset=$((gpu_id * PORT_OFFSET_PER_GPU))
     for port in $((BASE_PORT_SYSTEM + port_offset)) $((BASE_PORT_VIS + port_offset)) $((BASE_PORT_MRZ + port_offset)) $((BASE_PORT_GRAY + port_offset)); do
         if ! check_port $port; then
             echo "错误: 端口 $port 已被占用"
@@ -62,21 +64,21 @@ done
 # 启动OCR服务容器
 echo "开始启动OCR服务容器..."
 for gpu_id in $(seq 0 $(($NUM_GPUS-1))); do
-    port_offset=$((gpu_id * 10))  # 每张GPU的端口偏移
+    port_offset=$((gpu_id * PORT_OFFSET_PER_GPU))
     echo "正在启动 GPU $gpu_id 的服务容器..."
     container_id=$(docker run -d \
         --gpus "device=$gpu_id" \
-        --shm-size=4g \
-        --ipc=host \
-        --ulimit memlock=-1 \
-        --ulimit stack=67108864 \
+        --shm-size=${DOCKER_SHM_SIZE} \
+        --ipc=${DOCKER_IPC} \
+        --ulimit memlock=${DOCKER_MEMLOCK} \
+        --ulimit stack=${DOCKER_STACK_LIMIT} \
         -e CUDA_VISIBLE_DEVICES=$gpu_id \
-        -p $((BASE_PORT_SYSTEM + port_offset)):12342 \
-        -p $((BASE_PORT_VIS + port_offset)):12343 \
-        -p $((BASE_PORT_MRZ + port_offset)):12344 \
-        -p $((BASE_PORT_GRAY + port_offset)):12345 \
-        --name hubserving_$gpu_id \
-        hubserving:v0.1)
+        -p $((BASE_PORT_SYSTEM + port_offset)):${CONTAINER_PORT_SYSTEM} \
+        -p $((BASE_PORT_VIS + port_offset)):${CONTAINER_PORT_VIS} \
+        -p $((BASE_PORT_MRZ + port_offset)):${CONTAINER_PORT_MRZ} \
+        -p $((BASE_PORT_GRAY + port_offset)):${CONTAINER_PORT_GRAY} \
+        --name ${CONTAINER_PREFIX}$gpu_id \
+        ${DOCKER_IMAGE})
     echo "GPU $gpu_id 的服务容器已启动，容器ID: ${container_id:0:12}"
 done
 
