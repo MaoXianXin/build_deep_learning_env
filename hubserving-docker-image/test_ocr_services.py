@@ -6,6 +6,10 @@ from concurrent.futures import ThreadPoolExecutor
 import logging
 from dotenv import load_dotenv
 import base64
+from statistics import mean, median, stdev
+from typing import List, Tuple, Dict
+import matplotlib.pyplot as plt
+import pandas as pd
 
 """
 测试直接服务端点:
@@ -13,7 +17,8 @@ python test_ocr_services.py \
     --test_dirs /home/mao/datasets/LLM结构化提取/LLM训练数据/USA-134 \
                 /home/mao/workspace/PaddleOCR/passport_data/fixed_Name_sub_imgs \
                 /home/mao/workspace/PaddleOCR/passport_data/fixed_MRZ_sub_imgs \
-    --services system vis mrz
+    --services system vis mrz \
+    --thread-analysis
 
 测试Nginx负载均衡端点:
 python test_ocr_services.py \
@@ -21,7 +26,8 @@ python test_ocr_services.py \
                 /home/mao/workspace/PaddleOCR/passport_data/fixed_Name_sub_imgs \
                 /home/mao/workspace/PaddleOCR/passport_data/fixed_MRZ_sub_imgs \
     --services system vis mrz \
-    --nginx
+    --nginx \
+    --thread-analysis
 """
 
 # Configure logging
@@ -60,8 +66,9 @@ class OCRServiceTester:
             'gray': os.getenv('API_PATH_GRAY')
         }
 
-    def test_endpoint(self, url, image_path):
-        """Test a single endpoint with an image."""
+    def test_endpoint(self, url, image_path) -> Tuple[bool, any, float]:
+        """Test a single endpoint with an image and return timing."""
+        start_time = time.time()
         try:
             # 读取图片并转换为base64
             with open(image_path, 'rb') as f:
@@ -80,37 +87,144 @@ class OCRServiceTester:
             
             if response.status_code == 200:
                 result = response.json()
-                return True, result
+                return True, result, time.time() - start_time
             else:
-                return False, f"HTTP {response.status_code}: {response.text}"
+                return False, f"HTTP {response.status_code}: {response.text}", time.time() - start_time
                 
         except Exception as e:
-            return False, str(e)
+            return False, str(e), time.time() - start_time
 
-    def test_service(self, service_type, image_dir, use_nginx=False):
+    def process_batch(self, tasks: List[Tuple[str, str, bool]], max_workers: int) -> List[Tuple[bool, float]]:
+        """Process a batch of images concurrently with specified number of workers."""
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = []
+            for service_type, image_path, use_nginx in tasks:
+                port = self.container_ports[service_type] if use_nginx else self.base_ports[service_type]
+                url = f"http://127.0.0.1:{port}{self.api_paths[service_type]}"
+                futures.append(executor.submit(self.test_endpoint, url, image_path))
+            
+            results = []
+            for future in futures:
+                success, result, duration = future.result()
+                results.append((success, duration))
+            return results
+
+    def test_service(self, service_type, image_dir, use_nginx=False, concurrent=False, max_workers=5):
         """Test a specific service with all images in the directory."""
         port = self.container_ports[service_type] if use_nginx else self.base_ports[service_type]
         base_url = f"http://127.0.0.1:{port}{self.api_paths[service_type]}"
         
         logger.info(f"Testing {service_type} service at {base_url}")
         logger.info(f"Using {'Nginx load balancer' if use_nginx else 'direct service'}")
+        logger.info(f"Mode: {'Concurrent' if concurrent else 'Sequential'}")
 
         success_count = 0
         total_count = 0
+        durations = []
         
-        for image_name in os.listdir(image_dir):
-            if image_name.lower().endswith(('.png', '.jpg', '.jpeg')):
+        image_files = [f for f in os.listdir(image_dir) 
+                      if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
+        
+        if concurrent:
+            tasks = [(service_type, os.path.join(image_dir, img), use_nginx) 
+                    for img in image_files]
+            results = self.process_batch(tasks, max_workers)
+            
+            for success, duration in results:
+                total_count += 1
+                if success:
+                    success_count += 1
+                durations.append(duration)
+        else:
+            for image_name in image_files:
                 total_count += 1
                 image_path = os.path.join(image_dir, image_name)
-                success, result = self.test_endpoint(base_url, image_path)
+                success, result, duration = self.test_endpoint(base_url, image_path)
                 
                 if success:
                     success_count += 1
                     logger.debug(f"Successfully processed {image_name}")
                 else:
                     logger.error(f"Failed to process {image_name}: {result}")
+                durations.append(duration)
 
-        return success_count, total_count
+        timing_stats = {
+            'mean': mean(durations),
+            'median': median(durations),
+            'std_dev': stdev(durations) if len(durations) > 1 else 0,
+            'min': min(durations),
+            'max': max(durations),
+            'total': sum(durations)
+        }
+
+        return success_count, total_count, timing_stats
+
+def test_thread_performance(test_dirs: List[str], services: List[str], use_nginx: bool):
+    """Test performance with different thread counts and plot results."""
+    thread_counts = range(1, 6)  # 1-5 threads
+    performance_data = []
+    
+    tester = OCRServiceTester()
+    
+    for service, test_dir in zip(services, test_dirs):
+        logger.info(f"\nTesting {service} service with different thread counts...")
+        
+        for thread_count in thread_counts:
+            logger.info(f"Testing with {thread_count} threads...")
+            success_count, total_count, timing_stats = tester.test_service(
+                service, test_dir, use_nginx=use_nginx, 
+                concurrent=True, max_workers=thread_count
+            )
+            
+            performance_data.append({
+                'service': service,
+                'threads': thread_count,
+                'mean_time': timing_stats['mean'],
+                'total_time': timing_stats['total'],
+                'success_rate': success_count/total_count*100
+            })
+    
+    # Convert to DataFrame for easier plotting
+    df = pd.DataFrame(performance_data)
+    
+    # Create performance plots
+    plt.figure(figsize=(12, 6))
+    
+    # Plot mean time
+    plt.subplot(1, 2, 1)
+    for service in services:
+        service_data = df[df['service'] == service]
+        plt.plot(service_data['threads'], service_data['mean_time'], 
+                marker='o', label=f'{service} mean time')
+    plt.xlabel('Number of Threads')
+    plt.ylabel('Mean Time (seconds)')
+    plt.title('Mean Processing Time vs Thread Count')
+    plt.legend()
+    plt.grid(True)
+    
+    # Plot total time
+    plt.subplot(1, 2, 2)
+    for service in services:
+        service_data = df[df['service'] == service]
+        plt.plot(service_data['threads'], service_data['total_time'], 
+                marker='o', label=f'{service} total time')
+    plt.xlabel('Number of Threads')
+    plt.ylabel('Total Time (seconds)')
+    plt.title('Total Processing Time vs Thread Count')
+    plt.legend()
+    plt.grid(True)
+    
+    plt.tight_layout()
+    plt.savefig('ocr_performance_analysis.png')
+    plt.close()
+    
+    # Find optimal thread count for each service
+    for service in services:
+        service_data = df[df['service'] == service]
+        optimal_threads = service_data.loc[service_data['mean_time'].idxmin()]['threads']
+        logger.info(f"\nOptimal thread count for {service} service: {optimal_threads}")
+        logger.info("Performance data:")
+        logger.info(service_data.to_string(index=False))
 
 def main():
     parser = argparse.ArgumentParser(description='Test OCR services')
@@ -121,6 +235,10 @@ def main():
                        help='Services to test (space-separated)')
     parser.add_argument('--nginx', action='store_true',
                        help='Test Nginx load balanced endpoints')
+    parser.add_argument('--concurrent', action='store_true',
+                       help='Enable concurrent testing')
+    parser.add_argument('--thread-analysis', action='store_true',
+                       help='Perform thread count performance analysis')
     args = parser.parse_args()
 
     tester = OCRServiceTester()
@@ -135,22 +253,32 @@ def main():
             logger.error(f"Directory not found: {test_dir}")
             return
 
-    # Run tests for each service-directory pair
-    for service, test_dir in zip(args.services, args.test_dirs):
-        if service not in tester.base_ports:
-            logger.error(f"Unknown service: {service}")
-            continue
+    if args.thread_analysis:
+        test_thread_performance(args.test_dirs, args.services, args.nginx)
+    else:
+        # Run tests for each service-directory pair
+        for service, test_dir in zip(args.services, args.test_dirs):
+            if service not in tester.base_ports:
+                logger.error(f"Unknown service: {service}")
+                continue
             
-        logger.info(f"\nTesting {service} service with images from {test_dir}")
-        success_count, total_count = tester.test_service(
-            service, test_dir, use_nginx=args.nginx
-        )
-        
-        logger.info(
-            f"Results for {service}:\n"
-            f"Success rate: {success_count}/{total_count} "
-            f"({success_count/total_count*100:.2f}%)"
-        )
+            logger.info(f"\nTesting {service} service with images from {test_dir}")
+            success_count, total_count, timing_stats = tester.test_service(
+                service, test_dir, use_nginx=args.nginx, concurrent=args.concurrent
+            )
+            
+            logger.info(
+                f"Results for {service}:\n"
+                f"Success rate: {success_count}/{total_count} "
+                f"({success_count/total_count*100:.2f}%)\n"
+                f"Timing statistics (seconds):\n"
+                f"  Mean: {timing_stats['mean']:.3f}\n"
+                f"  Median: {timing_stats['median']:.3f}\n"
+                f"  Std Dev: {timing_stats['std_dev']:.3f}\n"
+                f"  Min: {timing_stats['min']:.3f}\n"
+                f"  Max: {timing_stats['max']:.3f}\n"
+                f"  Total: {timing_stats['total']:.3f}"
+            )
 
 if __name__ == "__main__":
     main()
