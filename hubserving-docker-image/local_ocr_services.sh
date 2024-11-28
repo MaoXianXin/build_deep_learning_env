@@ -60,9 +60,11 @@ for gpu_id in $(seq 0 $(($NUM_GPUS-1))); do
 done
 
 # 启动OCR服务容器
+echo "开始启动OCR服务容器..."
 for gpu_id in $(seq 0 $(($NUM_GPUS-1))); do
     port_offset=$((gpu_id * 10))  # 每张GPU的端口偏移
-    docker run -d \
+    echo "正在启动 GPU $gpu_id 的服务容器..."
+    container_id=$(docker run -d \
         --gpus "device=$gpu_id" \
         --shm-size=4g \
         --ipc=host \
@@ -74,7 +76,8 @@ for gpu_id in $(seq 0 $(($NUM_GPUS-1))); do
         -p $((BASE_PORT_MRZ + port_offset)):12344 \
         -p $((BASE_PORT_GRAY + port_offset)):12345 \
         --name hubserving_$gpu_id \
-        hubserving:v0.1
+        hubserving:v0.1)
+    echo "GPU $gpu_id 的服务容器已启动，容器ID: ${container_id:0:12}"
 done
 
 echo "本机OCR服务已启动，每个容器暴露以下端口："
