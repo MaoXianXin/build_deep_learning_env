@@ -39,12 +39,29 @@ else
     error_exit ".env 文件不存在"
 fi
 
+# Print the NODES variable
+echo "NODES from .env: $NODES"
+
 # 解析NODES字符串为数组
-declare -A NODES
+declare -A NODES_ARRAY
 IFS=',' read -ra NODE_ARRAY <<< "$NODES"
+
+# Print the NODE_ARRAY
+echo "Parsed NODE_ARRAY: ${NODE_ARRAY[@]}"
+
 for node in "${NODE_ARRAY[@]}"; do
     IFS=':' read -r ip gpu_count <<< "$node"
-    NODES[$ip]=$gpu_count
+    if [[ -n "$ip" && -n "$gpu_count" ]]; then
+        NODES_ARRAY[$ip]=$gpu_count
+    else
+        error_exit "NODES 格式错误: $node"
+    fi
+done
+
+# 打印出NODES的值
+echo "NODES values:"
+for ip in "${!NODES_ARRAY[@]}"; do
+    echo "IP: $ip, GPU Count: ${NODES_ARRAY[$ip]}"
 done
 
 # 创建Nginx配置
@@ -56,29 +73,29 @@ events {
 http {
     # 定义四种服务的upstream
     upstream ocr_system {
-$(for ip in "${!NODES[@]}"; do
-    for gpu_id in $(seq 0 $((${NODES[$ip]}-1))); do
+$(for ip in "${!NODES_ARRAY[@]}"; do
+    for gpu_id in $(seq 0 $((${NODES_ARRAY[$ip]}-1))); do
         echo "        server $ip:$((BASE_PORT_SYSTEM + gpu_id * PORT_OFFSET_PER_GPU));"
     done
 done)
     }
     upstream ocr_rec_vis {
-$(for ip in "${!NODES[@]}"; do
-    for gpu_id in $(seq 0 $((${NODES[$ip]}-1))); do
+$(for ip in "${!NODES_ARRAY[@]}"; do
+    for gpu_id in $(seq 0 $((${NODES_ARRAY[$ip]}-1))); do
         echo "        server $ip:$((BASE_PORT_VIS + gpu_id * PORT_OFFSET_PER_GPU));"
     done
 done)
     }
     upstream ocr_rec_mrz {
-$(for ip in "${!NODES[@]}"; do
-    for gpu_id in $(seq 0 $((${NODES[$ip]}-1))); do
+$(for ip in "${!NODES_ARRAY[@]}"; do
+    for gpu_id in $(seq 0 $((${NODES_ARRAY[$ip]}-1))); do
         echo "        server $ip:$((BASE_PORT_MRZ + gpu_id * PORT_OFFSET_PER_GPU));"
     done
 done)
     }
     upstream ocr_rec_vis_gray {
-$(for ip in "${!NODES[@]}"; do
-    for gpu_id in $(seq 0 $((${NODES[$ip]}-1))); do
+$(for ip in "${!NODES_ARRAY[@]}"; do
+    for gpu_id in $(seq 0 $((${NODES_ARRAY[$ip]}-1))); do
         echo "        server $ip:$((BASE_PORT_GRAY + gpu_id * PORT_OFFSET_PER_GPU));"
     done
 done)
