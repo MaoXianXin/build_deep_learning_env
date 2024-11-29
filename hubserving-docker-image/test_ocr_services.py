@@ -10,6 +10,8 @@ from statistics import mean, median, stdev
 from typing import List, Tuple, Dict
 import matplotlib.pyplot as plt
 import pandas as pd
+import threading
+from queue import Queue, Empty
 
 """
 测试直接服务端点:
@@ -36,6 +38,60 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+class ImagePreloader:
+    def __init__(self, max_size=10):
+        """初始化预加载器
+        Args:
+            max_size: 预加载队列的最大大小
+        """
+        self.queue = Queue(maxsize=max_size)
+        self._stop_event = threading.Event()
+        self._preload_thread = None
+
+    def start_preloading(self, image_paths: List[str]):
+        """启动预加载线程
+        Args:
+            image_paths: 需要预加载的图片路径列表
+        """
+        self._stop_event.clear()
+        self._preload_thread = threading.Thread(
+            target=self._preload_worker,
+            args=(image_paths,),
+            daemon=True
+        )
+        self._preload_thread.start()
+
+    def _preload_worker(self, image_paths: List[str]):
+        """预加载工作线程"""
+        while not self._stop_event.is_set():
+            for path in image_paths:
+                if self._stop_event.is_set():
+                    break
+                if not self.queue.full():
+                    try:
+                        with open(path, 'rb') as f:
+                            image_bytes = f.read()
+                        image_base64 = base64.b64encode(image_bytes).decode('utf-8')
+                        self.queue.put((path, image_base64), timeout=1)
+                    except Exception as e:
+                        logger.error(f"Error preloading image {path}: {e}")
+
+    def get_next_image(self, timeout=5) -> Tuple[str, str]:
+        """获取下一个预加载的图片
+        Returns:
+            Tuple[str, str]: (图片路径, base64编码的图片数据)
+        """
+        try:
+            return self.queue.get(timeout=timeout)
+        except Empty:
+            raise TimeoutError("预加载队列为空")
+
+    def stop(self):
+        """停止预加载"""
+        self._stop_event.set()
+        if self._preload_thread and self._preload_thread.is_alive():
+            self._preload_thread.join(timeout=1)
 
 class OCRServiceTester:
     def __init__(self):
@@ -65,16 +121,14 @@ class OCRServiceTester:
             'mrz': os.getenv('API_PATH_MRZ'),
             'gray': os.getenv('API_PATH_GRAY')
         }
+        self.preloader = ImagePreloader(max_size=20)  # 添加预加载器
 
-    def test_endpoint(self, url, image_path) -> Tuple[bool, any, float]:
+    def test_endpoint(self, url: str, image_path: str) -> Tuple[bool, any, float]:
         """Test a single endpoint with an image and return timing."""
         start_time = time.time()
         try:
-            # 读取图片并转换为base64
-            with open(image_path, 'rb') as f:
-                image_bytes = f.read()
-            
-            image_base64 = base64.b64encode(image_bytes).decode('utf-8')
+            # 使用预加载的图片数据
+            _, image_base64 = self.preloader.get_next_image()
             
             # 构建JSON请求数据
             json_data = {
@@ -109,7 +163,7 @@ class OCRServiceTester:
                 results.append((success, duration))
             return results
 
-    def test_service(self, service_type, image_dir, use_nginx=False, concurrent=False, max_workers=5):
+    def test_service(self, service_type: str, image_dir: str, use_nginx=False, concurrent=False, max_workers=5):
         """Test a specific service with all images in the directory."""
         port = self.container_ports[service_type] if use_nginx else self.base_ports[service_type]
         base_url = f"http://127.0.0.1:{port}{self.api_paths[service_type]}"
@@ -124,29 +178,36 @@ class OCRServiceTester:
         
         image_files = [f for f in os.listdir(image_dir) 
                       if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
+        image_paths = [os.path.join(image_dir, img) for img in image_files]
+
+        # 启动预加载
+        self.preloader.start_preloading(image_paths)
         
-        if concurrent:
-            tasks = [(service_type, os.path.join(image_dir, img), use_nginx) 
-                    for img in image_files]
-            results = self.process_batch(tasks, max_workers)
-            
-            for success, duration in results:
-                total_count += 1
-                if success:
-                    success_count += 1
-                durations.append(duration)
-        else:
-            for image_name in image_files:
-                total_count += 1
-                image_path = os.path.join(image_dir, image_name)
-                success, result, duration = self.test_endpoint(base_url, image_path)
+        try:
+            if concurrent:
+                tasks = [(service_type, path, use_nginx) 
+                        for path in image_paths]
+                results = self.process_batch(tasks, max_workers)
                 
-                if success:
-                    success_count += 1
-                    logger.debug(f"Successfully processed {image_name}")
-                else:
-                    logger.error(f"Failed to process {image_name}: {result}")
-                durations.append(duration)
+                for success, duration in results:
+                    total_count += 1
+                    if success:
+                        success_count += 1
+                    durations.append(duration)
+            else:
+                for image_path in image_paths:
+                    total_count += 1
+                    success, result, duration = self.test_endpoint(base_url, image_path)
+                    
+                    if success:
+                        success_count += 1
+                        logger.debug(f"Successfully processed {os.path.basename(image_path)}")
+                    else:
+                        logger.error(f"Failed to process {os.path.basename(image_path)}: {result}")
+                    durations.append(duration)
+        finally:
+            # 停止预加载
+            self.preloader.stop()
 
         timing_stats = {
             'mean': mean(durations),
