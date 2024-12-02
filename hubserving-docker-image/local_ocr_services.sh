@@ -73,6 +73,12 @@ for gpu_id in $(seq 0 $(($NUM_GPUS-1))); do
         --ulimit memlock=${DOCKER_MEMLOCK} \
         --ulimit stack=${DOCKER_STACK_LIMIT} \
         -e CUDA_VISIBLE_DEVICES=$gpu_id \
+        -v "$(pwd)/PaddleOCR:/paddle/PaddleOCR" \
+        -v "$(pwd)/ch_PP-OCRv4_det_server_infer:/paddle/PaddleOCR/inference/ch_PP-OCRv4_det_server_infer" \
+        -v "$(pwd)/ch_PP-OCRv4_rec_server_infer:/paddle/PaddleOCR/inference/ch_PP-OCRv4_rec_server_infer" \
+        -v "$(pwd)/en_PP-OCRv4_rec_mrz:/paddle/PaddleOCR/inference/en_PP-OCRv4_rec_mrz" \
+        -v "$(pwd)/en_PP-OCRv4_rec_vis:/paddle/PaddleOCR/inference/en_PP-OCRv4_rec_vis" \
+        -v "$(pwd)/en_PP-OCRv4_rec_vis_gray:/paddle/PaddleOCR/inference/en_PP-OCRv4_rec_vis_gray" \
         -p $((BASE_PORT_SYSTEM + port_offset)):${CONTAINER_PORT_SYSTEM} \
         -p $((BASE_PORT_VIS + port_offset)):${CONTAINER_PORT_VIS} \
         -p $((BASE_PORT_MRZ + port_offset)):${CONTAINER_PORT_MRZ} \
