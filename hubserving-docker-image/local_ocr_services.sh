@@ -72,7 +72,7 @@ for gpu_id in $(seq 0 $(($NUM_GPUS-1))); do
         --ipc=${DOCKER_IPC} \
         --ulimit memlock=${DOCKER_MEMLOCK} \
         --ulimit stack=${DOCKER_STACK_LIMIT} \
-        -e CUDA_VISIBLE_DEVICES=$gpu_id \
+        -e CUDA_VISIBLE_DEVICES=0 \
         -v "$(pwd)/PaddleOCR:/paddle/PaddleOCR" \
         -v "$(pwd)/ch_PP-OCRv4_det_server_infer:/paddle/PaddleOCR/inference/ch_PP-OCRv4_det_server_infer" \
         -v "$(pwd)/ch_PP-OCRv4_rec_server_infer:/paddle/PaddleOCR/inference/ch_PP-OCRv4_rec_server_infer" \
