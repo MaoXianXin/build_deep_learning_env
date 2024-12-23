@@ -11,7 +11,7 @@ fi
 # 清理函数
 cleanup() {
     echo "正在清理..."
-    containers=$(docker ps -a | grep 'hubserving_' | awk '{print $1}')
+    containers=$(docker ps -a | grep "${CONTAINER_PREFIX}" | awk '{print $1}')
     if [ ! -z "$containers" ]; then
         docker rm -f $containers || true
     fi
@@ -50,28 +50,39 @@ if [ $NUM_GPUS -eq 0 ]; then
     exit 1
 fi
 
-# 在启动容器前检查端口
+# 解析服务配置
+declare -A BASE_PORTS CONTAINER_PORTS API_PATHS
+for service in "${SERVICES[@]}"; do
+    IFS=':' read -r name base_port container_port api_path <<< "$service"
+    BASE_PORTS[$name]=$base_port
+    CONTAINER_PORTS[$name]=$container_port
+    API_PATHS[$name]=$api_path
+done
+
+# 检查端口
 for gpu_id in $(seq 0 $(($NUM_GPUS-1))); do
     port_offset=$((gpu_id * PORT_OFFSET_PER_GPU))
-    for port in $((BASE_PORT_SYSTEM + port_offset)) $((BASE_PORT_VIS + port_offset)) $((BASE_PORT_MRZ + port_offset)) $((BASE_PORT_GRAY + port_offset)); do
+    for service in "${!BASE_PORTS[@]}"; do
+        port=$((BASE_PORTS[$service] + port_offset))
         if ! check_port $port; then
-            echo "错误: 端口 $port 已被占用"
-            exit 1
+            error_exit "端口 $port 已被占用"
         fi
     done
 done
 
-# 启动OCR服务容器
-echo "开始启动OCR服务容器..."
+# 启动容器
 for gpu_id in $(seq 0 $(($NUM_GPUS-1))); do
     port_offset=$((gpu_id * PORT_OFFSET_PER_GPU))
-    echo "正在启动 GPU $gpu_id 的服务容器..."
+    port_mappings=""
+    for service in "${!BASE_PORTS[@]}"; do
+        port_mappings+=" -p $((BASE_PORTS[$service] + port_offset)):${CONTAINER_PORTS[$service]}"
+    done
+    
     container_id=$(docker run -d \
         --gpus "device=$gpu_id" \
         --shm-size=${DOCKER_SHM_SIZE} \
         --ipc=${DOCKER_IPC} \
-        --ulimit memlock=${DOCKER_MEMLOCK} \
-        --ulimit stack=${DOCKER_STACK_LIMIT} \
+        $port_mappings \
         -e CUDA_VISIBLE_DEVICES=0 \
         -v "$(pwd)/PaddleOCR:/paddle/PaddleOCR" \
         -v "$(pwd)/ch_PP-OCRv4_det_server_infer:/paddle/PaddleOCR/inference/ch_PP-OCRv4_det_server_infer" \
@@ -79,20 +90,15 @@ for gpu_id in $(seq 0 $(($NUM_GPUS-1))); do
         -v "$(pwd)/en_PP-OCRv4_rec_mrz:/paddle/PaddleOCR/inference/en_PP-OCRv4_rec_mrz" \
         -v "$(pwd)/en_PP-OCRv4_rec_vis:/paddle/PaddleOCR/inference/en_PP-OCRv4_rec_vis" \
         -v "$(pwd)/en_PP-OCRv4_rec_vis_gray:/paddle/PaddleOCR/inference/en_PP-OCRv4_rec_vis_gray" \
-        -p $((BASE_PORT_SYSTEM + port_offset)):${CONTAINER_PORT_SYSTEM} \
-        -p $((BASE_PORT_VIS + port_offset)):${CONTAINER_PORT_VIS} \
-        -p $((BASE_PORT_MRZ + port_offset)):${CONTAINER_PORT_MRZ} \
-        -p $((BASE_PORT_GRAY + port_offset)):${CONTAINER_PORT_GRAY} \
         --name ${CONTAINER_PREFIX}$gpu_id \
         ${DOCKER_IMAGE})
     echo "GPU $gpu_id 的服务容器已启动，容器ID: ${container_id:0:12}"
 done
 
 echo "本机OCR服务已启动，每个容器暴露以下端口："
-echo "OCR System 起始端口: $BASE_PORT_SYSTEM"
-echo "OCR Rec Vis 起始端口: $BASE_PORT_VIS"
-echo "OCR Rec MRZ 起始端口: $BASE_PORT_MRZ"
-echo "OCR Rec Vis Gray 起始端口: $BASE_PORT_GRAY"
+for service in "${!BASE_PORTS[@]}"; do
+    echo "$service 起始端口: ${BASE_PORTS[$service]}"
+done
 
 # 取消EXIT trap
 trap - EXIT

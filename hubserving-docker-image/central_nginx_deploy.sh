@@ -64,6 +64,15 @@ for ip in "${!NODES_ARRAY[@]}"; do
     echo "IP: $ip, GPU Count: ${NODES_ARRAY[$ip]}"
 done
 
+# 解析服务配置
+declare -A BASE_PORTS CONTAINER_PORTS API_PATHS
+for service in "${SERVICES[@]}"; do
+    IFS=':' read -r name base_port container_port api_path <<< "$service"
+    BASE_PORTS[$name]=$base_port
+    CONTAINER_PORTS[$name]=$container_port
+    API_PATHS[$name]=$api_path
+done
+
 # 创建Nginx配置
 cat > nginx.conf <<EOF
 worker_processes auto;  # 自动检测CPU核心数
@@ -106,87 +115,32 @@ http {
     access_log /var/log/nginx/access.log main;
     error_log /var/log/nginx/error.log warn;
 
-    # 定义四种服务的upstream
-    upstream ocr_system {
-        least_conn;  # 最小连接数负载均衡
-        keepalive 32;  # 保持后端连接
-$(for ip in "${!NODES_ARRAY[@]}"; do
-    for gpu_id in $(seq 0 $((${NODES_ARRAY[$ip]}-1))); do
-        echo "        server $ip:$((BASE_PORT_SYSTEM + gpu_id * PORT_OFFSET_PER_GPU)) max_fails=3 fail_timeout=30s;"
-    done
-done)
-    }
+    # 动态生成upstream配置
+    $(for service in "${!BASE_PORTS[@]}"; do
+        echo "    upstream ocr_${service} {"
+        echo "        least_conn;"
+        echo "        keepalive 32;"
+        for ip in "${!NODES_ARRAY[@]}"; do
+            for gpu_id in $(seq 0 $((${NODES_ARRAY[$ip]}-1))); do
+                port=$((BASE_PORTS[$service] + gpu_id * PORT_OFFSET_PER_GPU))
+                echo "        server ${ip}:${port} max_fails=3 fail_timeout=30s;"
+            done
+        done
+        echo "    }"
+        echo
+    done)
 
-    upstream ocr_rec_vis {
-        least_conn;
-        keepalive 32;
-$(for ip in "${!NODES_ARRAY[@]}"; do
-    for gpu_id in $(seq 0 $((${NODES_ARRAY[$ip]}-1))); do
-        echo "        server $ip:$((BASE_PORT_VIS + gpu_id * PORT_OFFSET_PER_GPU)) max_fails=3 fail_timeout=30s;"
-    done
-done)
-    }
-
-    upstream ocr_rec_mrz {
-        least_conn;
-        keepalive 32;
-$(for ip in "${!NODES_ARRAY[@]}"; do
-    for gpu_id in $(seq 0 $((${NODES_ARRAY[$ip]}-1))); do
-        echo "        server $ip:$((BASE_PORT_MRZ + gpu_id * PORT_OFFSET_PER_GPU)) max_fails=3 fail_timeout=30s;"
-    done
-done)
-    }
-
-    upstream ocr_rec_vis_gray {
-        least_conn;
-        keepalive 32;
-$(for ip in "${!NODES_ARRAY[@]}"; do
-    for gpu_id in $(seq 0 $((${NODES_ARRAY[$ip]}-1))); do
-        echo "        server $ip:$((BASE_PORT_GRAY + gpu_id * PORT_OFFSET_PER_GPU)) max_fails=3 fail_timeout=30s;"
-    done
-done)
-    }
-
-    # 定义四个服务的负载均衡规则
+    # 动态生成server配置
+    $(for service in "${!BASE_PORTS[@]}"; do
+        cat <<EOFSERVER
     server {
-        listen ${CONTAINER_PORT_SYSTEM};
-        
-        # 基础安全头部
+        listen ${CONTAINER_PORTS[$service]};
         add_header X-Frame-Options "SAMEORIGIN" always;
         add_header X-XSS-Protection "1; mode=block" always;
         add_header X-Content-Type-Options "nosniff" always;
         
-        location ${API_PATH_SYSTEM} {
-            proxy_pass http://ocr_system;
-            
-            # 代理设置
-            proxy_http_version 1.1;
-            proxy_set_header Connection "";  # 开启keepalive
-            proxy_set_header Host \$host;
-            proxy_set_header X-Real-IP \$remote_addr;
-            proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-            
-            # 超时设置
-            proxy_connect_timeout 60s;
-            proxy_send_timeout 60s;
-            proxy_read_timeout 60s;
-            
-            # 缓冲设置
-            proxy_buffer_size 4k;
-            proxy_buffers 4 32k;
-            proxy_busy_buffers_size 64k;
-        }
-    }
-
-    # 其他三个服务使用相同的配置模式
-    server {
-        listen ${CONTAINER_PORT_VIS};
-        add_header X-Frame-Options "SAMEORIGIN" always;
-        add_header X-XSS-Protection "1; mode=block" always;
-        add_header X-Content-Type-Options "nosniff" always;
-        
-        location ${API_PATH_VIS} {
-            proxy_pass http://ocr_rec_vis;
+        location ${API_PATHS[$service]} {
+            proxy_pass http://ocr_${service};
             proxy_http_version 1.1;
             proxy_set_header Connection "";
             proxy_set_header Host \$host;
@@ -201,51 +155,20 @@ done)
         }
     }
 
-    server {
-        listen ${CONTAINER_PORT_MRZ};
-        add_header X-Frame-Options "SAMEORIGIN" always;
-        add_header X-XSS-Protection "1; mode=block" always;
-        add_header X-Content-Type-Options "nosniff" always;
-        
-        location ${API_PATH_MRZ} {
-            proxy_pass http://ocr_rec_mrz;
-            proxy_http_version 1.1;
-            proxy_set_header Connection "";
-            proxy_set_header Host \$host;
-            proxy_set_header X-Real-IP \$remote_addr;
-            proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-            proxy_connect_timeout 60s;
-            proxy_send_timeout 60s;
-            proxy_read_timeout 60s;
-            proxy_buffer_size 4k;
-            proxy_buffers 4 32k;
-            proxy_busy_buffers_size 64k;
-        }
-    }
-
-    server {
-        listen ${CONTAINER_PORT_GRAY};
-        add_header X-Frame-Options "SAMEORIGIN" always;
-        add_header X-XSS-Protection "1; mode=block" always;
-        add_header X-Content-Type-Options "nosniff" always;
-        
-        location ${API_PATH_GRAY} {
-            proxy_pass http://ocr_rec_vis_gray;
-            proxy_http_version 1.1;
-            proxy_set_header Connection "";
-            proxy_set_header Host \$host;
-            proxy_set_header X-Real-IP \$remote_addr;
-            proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-            proxy_connect_timeout 60s;
-            proxy_send_timeout 60s;
-            proxy_read_timeout 60s;
-            proxy_buffer_size 4k;
-            proxy_buffers 4 32k;
-            proxy_busy_buffers_size 64k;
-        }
-    }
+EOFSERVER
+    done)
 }
 EOF
+
+# 添加配置文件检查
+echo "检查生成的nginx配置文件..."
+cat nginx.conf
+
+# 使用nginx -t检查配置文件语法
+docker run --rm \
+    -v $(pwd)/nginx.conf:/etc/nginx/nginx.conf:ro \
+    ${NGINX_IMAGE} \
+    nginx -t || error_exit "Nginx配置文件语法检查失败"
 
 # 检查必要的端口
 PORTS=(${CONTAINER_PORT_SYSTEM} ${CONTAINER_PORT_VIS} ${CONTAINER_PORT_MRZ} ${CONTAINER_PORT_GRAY})
@@ -260,13 +183,21 @@ if [ ! -f "nginx.conf" ]; then
     error_exit "nginx.conf 配置文件不存在"
 fi
 
-# 启动Nginx容器
+# 启动Nginx容器时添加日志挂载
 echo "正在启动 Nginx 容器..."
 CONTAINER_ID=$(docker run -d \
     --name ${NGINX_CONTAINER_NAME} \
     --network host \
     -v $(pwd)/nginx.conf:/etc/nginx/nginx.conf:ro \
+    -v $(pwd)/nginx_logs:/var/log/nginx \
     ${NGINX_IMAGE})
+
+# 添加容器状态检查
+if [ ! "$(docker ps -q -f id=${CONTAINER_ID})" ]; then
+    echo "Nginx容器启动失败，查看容器日志："
+    docker logs ${CONTAINER_ID}
+    error_exit "Nginx容器未能正常运行"
+fi
 
 echo "Nginx 容器已启动:"
 echo "容器 ID: ${CONTAINER_ID:0:12}"
