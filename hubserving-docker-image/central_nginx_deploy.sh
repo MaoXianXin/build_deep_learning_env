@@ -116,23 +116,25 @@ http {
     error_log /var/log/nginx/error.log warn;
 
     # 动态生成upstream配置
-    $(for service in "${!BASE_PORTS[@]}"; do
-        echo "    upstream ocr_${service} {"
-        echo "        least_conn;"
-        echo "        keepalive 32;"
-        for ip in "${!NODES_ARRAY[@]}"; do
-            for gpu_id in $(seq 0 $((${NODES_ARRAY[$ip]}-1))); do
-                port=$((BASE_PORTS[$service] + gpu_id * PORT_OFFSET_PER_GPU))
-                echo "        server ${ip}:${port} max_fails=3 fail_timeout=30s;"
-            done
-        done
-        echo "    }"
-        echo
-    done)
+$(for service in "${!BASE_PORTS[@]}"; do
+    cat <<EOFUPSTREAM
+    upstream ocr_${service} {
+        least_conn;
+        keepalive 32;
+$(for ip in "${!NODES_ARRAY[@]}"; do
+    for gpu_id in $(seq 0 $((${NODES_ARRAY[$ip]}-1))); do
+        port=$((BASE_PORTS[$service] + gpu_id * PORT_OFFSET_PER_GPU))
+        echo "        server ${ip}:${port} max_fails=3 fail_timeout=30s;"
+    done
+done)
+    }
+
+EOFUPSTREAM
+done)
 
     # 动态生成server配置
-    $(for service in "${!BASE_PORTS[@]}"; do
-        cat <<EOFSERVER
+$(for service in "${!BASE_PORTS[@]}"; do
+    cat <<EOFSERVER
     server {
         listen ${CONTAINER_PORTS[$service]};
         add_header X-Frame-Options "SAMEORIGIN" always;
@@ -156,7 +158,7 @@ http {
     }
 
 EOFSERVER
-    done)
+done)
 }
 EOF
 
