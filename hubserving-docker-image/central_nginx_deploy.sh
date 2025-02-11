@@ -44,15 +44,17 @@ echo "NODES from .env: $NODES"
 
 # 解析NODES字符串为数组
 declare -A NODES_ARRAY
+declare -A REPLICAS_ARRAY
 IFS=',' read -ra NODE_ARRAY <<< "$NODES"
 
 # Print the NODE_ARRAY
 echo "Parsed NODE_ARRAY: ${NODE_ARRAY[@]}"
 
 for node in "${NODE_ARRAY[@]}"; do
-    IFS=':' read -r ip gpu_count <<< "$node"
-    if [[ -n "$ip" && -n "$gpu_count" ]]; then
+    IFS=':' read -r ip gpu_count replicas <<< "$node"
+    if [[ -n "$ip" && -n "$gpu_count" && -n "$replicas" ]]; then
         NODES_ARRAY[$ip]=$gpu_count
+        REPLICAS_ARRAY[$ip]=$replicas
     else
         error_exit "NODES 格式错误: $node"
     fi
@@ -61,7 +63,7 @@ done
 # 打印出NODES的值
 echo "NODES values:"
 for ip in "${!NODES_ARRAY[@]}"; do
-    echo "IP: $ip, GPU Count: ${NODES_ARRAY[$ip]}"
+    echo "IP: $ip, GPU Count: ${NODES_ARRAY[$ip]}, Replicas: ${REPLICAS_ARRAY[$ip]}"
 done
 
 # 解析服务配置
@@ -123,8 +125,12 @@ $(for service in "${!BASE_PORTS[@]}"; do
         keepalive 32;
 $(for ip in "${!NODES_ARRAY[@]}"; do
     for gpu_id in $(seq 0 $((${NODES_ARRAY[$ip]}-1))); do
-        port=$((BASE_PORTS[$service] + gpu_id * PORT_OFFSET_PER_GPU))
-        echo "        server ${ip}:${port} max_fails=3 fail_timeout=30s;"
+        gpu_port_offset=$((gpu_id * PORT_OFFSET_PER_GPU))
+        for replica_id in $(seq 0 $((${REPLICAS_ARRAY[$ip]}-1))); do
+            replica_port_offset=$((replica_id * PORT_OFFSET_PER_REPLICA))
+            port=$((BASE_PORTS[$service] + gpu_port_offset + replica_port_offset))
+            echo "        server ${ip}:${port} max_fails=3 fail_timeout=30s;"
+        done
     done
 done)
     }

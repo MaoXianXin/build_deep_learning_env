@@ -59,40 +59,64 @@ for service in "${SERVICES[@]}"; do
     API_PATHS[$name]=$api_path
 done
 
+# 从NODES配置中获取本机IP对应的副本数
+get_replicas_per_gpu() {
+    local my_ip=$(hostname -I | awk '{print $1}')
+    IFS=',' read -ra NODE_ARRAY <<< "$NODES"
+    for node in "${NODE_ARRAY[@]}"; do
+        IFS=':' read -r ip gpu_count replicas <<< "$node"
+        if [[ "$ip" == "$my_ip" ]]; then
+            echo "$replicas"
+            return
+        fi
+    done
+    echo "1"  # 默认值为1
+}
+
+REPLICAS_PER_GPU=$(get_replicas_per_gpu)
+echo "每个GPU将启动 $REPLICAS_PER_GPU 个副本"
+
 # 检查端口
 for gpu_id in $(seq 0 $(($NUM_GPUS-1))); do
-    port_offset=$((gpu_id * PORT_OFFSET_PER_GPU))
-    for service in "${!BASE_PORTS[@]}"; do
-        port=$((BASE_PORTS[$service] + port_offset))
-        if ! check_port $port; then
-            error_exit "端口 $port 已被占用"
-        fi
+    gpu_port_offset=$((gpu_id * PORT_OFFSET_PER_GPU))
+    for replica_id in $(seq 0 $(($REPLICAS_PER_GPU-1))); do
+        replica_port_offset=$((replica_id * PORT_OFFSET_PER_REPLICA))
+        for service in "${!BASE_PORTS[@]}"; do
+            port=$((BASE_PORTS[$service] + gpu_port_offset + replica_port_offset))
+            if ! check_port $port; then
+                error_exit "端口 $port 已被占用"
+            fi
+        done
     done
 done
 
 # 启动容器
 for gpu_id in $(seq 0 $(($NUM_GPUS-1))); do
-    port_offset=$((gpu_id * PORT_OFFSET_PER_GPU))
-    port_mappings=""
-    for service in "${!BASE_PORTS[@]}"; do
-        port_mappings+=" -p $((BASE_PORTS[$service] + port_offset)):${CONTAINER_PORTS[$service]}"
+    gpu_port_offset=$((gpu_id * PORT_OFFSET_PER_GPU))
+    for replica_id in $(seq 0 $(($REPLICAS_PER_GPU-1))); do
+        replica_port_offset=$((replica_id * PORT_OFFSET_PER_REPLICA))
+        port_mappings=""
+        for service in "${!BASE_PORTS[@]}"; do
+            port=$((BASE_PORTS[$service] + gpu_port_offset + replica_port_offset))
+            port_mappings+=" -p ${port}:${CONTAINER_PORTS[$service]}"
+        done
+        
+        container_id=$(docker run -d \
+            --gpus "device=$gpu_id" \
+            --shm-size=${DOCKER_SHM_SIZE} \
+            --ipc=${DOCKER_IPC} \
+            $port_mappings \
+            -e CUDA_VISIBLE_DEVICES=0 \
+            -v "$(pwd)/PaddleOCR:/paddle/PaddleOCR" \
+            -v "$(pwd)/ch_PP-OCRv4_det_server_infer:/paddle/PaddleOCR/inference/ch_PP-OCRv4_det_server_infer" \
+            -v "$(pwd)/ch_PP-OCRv4_rec_server_infer:/paddle/PaddleOCR/inference/ch_PP-OCRv4_rec_server_infer" \
+            -v "$(pwd)/en_PP-OCRv4_rec_mrz:/paddle/PaddleOCR/inference/en_PP-OCRv4_rec_mrz" \
+            -v "$(pwd)/en_PP-OCRv4_rec_vis:/paddle/PaddleOCR/inference/en_PP-OCRv4_rec_vis" \
+            -v "$(pwd)/en_PP-OCRv4_rec_vis_gray:/paddle/PaddleOCR/inference/en_PP-OCRv4_rec_vis_gray" \
+            --name "${CONTAINER_PREFIX}${gpu_id}_${replica_id}" \
+            ${DOCKER_IMAGE})
+        echo "GPU $gpu_id 的副本 $replica_id 服务容器已启动，容器ID: ${container_id:0:12}"
     done
-    
-    container_id=$(docker run -d \
-        --gpus "device=$gpu_id" \
-        --shm-size=${DOCKER_SHM_SIZE} \
-        --ipc=${DOCKER_IPC} \
-        $port_mappings \
-        -e CUDA_VISIBLE_DEVICES=0 \
-        -v "$(pwd)/PaddleOCR:/paddle/PaddleOCR" \
-        -v "$(pwd)/ch_PP-OCRv4_det_server_infer:/paddle/PaddleOCR/inference/ch_PP-OCRv4_det_server_infer" \
-        -v "$(pwd)/ch_PP-OCRv4_rec_server_infer:/paddle/PaddleOCR/inference/ch_PP-OCRv4_rec_server_infer" \
-        -v "$(pwd)/en_PP-OCRv4_rec_mrz:/paddle/PaddleOCR/inference/en_PP-OCRv4_rec_mrz" \
-        -v "$(pwd)/en_PP-OCRv4_rec_vis:/paddle/PaddleOCR/inference/en_PP-OCRv4_rec_vis" \
-        -v "$(pwd)/en_PP-OCRv4_rec_vis_gray:/paddle/PaddleOCR/inference/en_PP-OCRv4_rec_vis_gray" \
-        --name ${CONTAINER_PREFIX}$gpu_id \
-        ${DOCKER_IMAGE})
-    echo "GPU $gpu_id 的服务容器已启动，容器ID: ${container_id:0:12}"
 done
 
 echo "本机OCR服务已启动，每个容器暴露以下端口："
