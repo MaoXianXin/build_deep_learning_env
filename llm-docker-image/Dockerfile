@@ -24,19 +24,21 @@ ENV PATH="/root/anaconda3/bin:${PATH}"
 RUN echo "source /root/anaconda3/etc/profile.d/conda.sh" >> /root/.bashrc && \
     echo "conda activate unsloth_env" >> /root/.bashrc
 
-# 创建unsloth_env虚拟环境
+# 创建unsloth_env虚拟环境并清理conda缓存
 RUN /root/anaconda3/bin/conda create -n unsloth_env \
     python=3.11 \
     pytorch-cuda=12.1 \
     pytorch cudatoolkit xformers -c pytorch -c nvidia -c xformers \
-    -y
+    -y && \
+    /root/anaconda3/bin/conda clean -afy
 
 # 激活虚拟环境
 SHELL ["/root/anaconda3/bin/conda", "run", "-n", "unsloth_env", "/bin/bash", "-c"]
 
-# 在虚拟环境中安装 unsloth 和 xformers
+# 在虚拟环境中安装 unsloth 和 xformers，并清理pip缓存
 RUN pip install unsloth==2025.3.19 && \
-    pip install -U xformers --index-url https://download.pytorch.org/whl/cu124
+    pip install -U xformers --index-url https://download.pytorch.org/whl/cu124 && \
+    rm -rf /root/.cache/pip
 
 # 启动时运行 Bash shell
 CMD ["/bin/bash"]
