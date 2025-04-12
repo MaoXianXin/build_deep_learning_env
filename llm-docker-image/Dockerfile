@@ -22,25 +22,21 @@ ENV PATH="/root/anaconda3/bin:${PATH}"
 
 # 在.bashrc中添加source /root/anaconda3/etc/profile.d/conda.sh
 RUN echo "source /root/anaconda3/etc/profile.d/conda.sh" >> /root/.bashrc && \
-    echo "conda activate llm" >> /root/.bashrc
+    echo "conda activate unsloth_env" >> /root/.bashrc
 
-# 创建虚拟环境
-RUN /root/anaconda3/bin/conda create -n llm python=3.10
+# 创建unsloth_env虚拟环境
+RUN /root/anaconda3/bin/conda create -n unsloth_env \
+    python=3.11 \
+    pytorch-cuda=12.1 \
+    pytorch cudatoolkit xformers -c pytorch -c nvidia -c xformers \
+    -y
 
 # 激活虚拟环境
-SHELL ["/root/anaconda3/bin/conda", "run", "-n", "llm", "/bin/bash", "-c"]
+SHELL ["/root/anaconda3/bin/conda", "run", "-n", "unsloth_env", "/bin/bash", "-c"]
 
-# 在虚拟环境中安装 PyTorch
-RUN conda install -y pytorch==2.2.1 torchvision==0.17.1 torchaudio==2.2.1 pytorch-cuda=12.1 -c pytorch -c nvidia
-
-# 在虚拟环境中安装 python包
-RUN pip install pydantic==2.7.0 datasets==2.19.0 transformers==4.40.0 peft==0.10.0 trl==0.8.5 gradio==4.27.0 vllm==0.4.1 jieba==0.42.1 nltk==3.8.1 rouge-chinese==1.0.3
-
-# 复制 install.sh 脚本到容器中
-COPY install.sh /root/install.sh
-
-# 执行 install.sh 脚本
-RUN bash /root/install.sh
+# 在虚拟环境中安装 unsloth 和 xformers
+RUN pip install unsloth==2025.3.19 && \
+    pip install -U xformers --index-url https://download.pytorch.org/whl/cu124
 
 # 启动时运行 Bash shell
 CMD ["/bin/bash"]
