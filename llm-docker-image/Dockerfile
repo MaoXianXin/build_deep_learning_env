@@ -1,5 +1,5 @@
 # 基于 nvcr.io/nvidia/pytorch:24.07-py3 镜像
-FROM nvcr.io/nvidia/pytorch:24.07-py3
+FROM ubuntu:22.04
 
 # 安装必要的依赖项
 RUN apt-get update && apt-get install -y \
@@ -39,6 +39,13 @@ SHELL ["/root/anaconda3/bin/conda", "run", "-n", "unsloth_env", "/bin/bash", "-c
 RUN pip install unsloth==2025.3.19 && \
     pip install -U xformers --index-url https://download.pytorch.org/whl/cu124 && \
     rm -rf /root/.cache/pip
+
+# 安装C/C++编译工具链
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    gcc \
+    g++ \
+    && rm -rf /var/lib/apt/lists/*
 
 # 启动时运行 Bash shell
 CMD ["/bin/bash"]
